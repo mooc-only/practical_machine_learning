@@ -14,7 +14,7 @@ The task is to classify the parameters of each exercise observed in one of the f
 * D - lowering the dumbbell only halfway.  
 * E - throwing the hips to the front.  
   
-In the results it was found that as expected that *""Random Forest* algorithm outperformed *"Decision Trees"* by a large margin (in this particular case way better).
+In the results it was found that as expected that *""Random Forest* algorithm outperformed *"Decision Trees"* by a large margin (in this particular case, way better).
 
 # Setting up and analysis on data input
 
@@ -23,6 +23,7 @@ The data provided by the course site is a subset or an out-of-date version of wh
 To improve the generation of this report I will build a function that check if file is already downloaded to avoid repeatedly download the same file (useful for those behind a proxy with low bandwidth)
 
 ```{r}
+# this function simplify the work of download the input dataset
 setup.filedata <- function(url) {
     url <- URLdecode(url)
     list <- strsplit( url, "/" )[[1]]
@@ -46,7 +47,7 @@ fnames <- names(input)
 head(fnames, 10)
 ```
 
-As the first 7 seven features are irrelevant they can be eliminated from our data set together, as well as those with values almost unchanged and finally the ones with certain amount of NA values in their inputs (I don't see how imputing values here could be a wise decision; perhaps with less features and a human expert opinion about the field that could decide if some of them are determinant no matter what, we could do some work, but it is not the case).
+The first 7 seven features seems to be irrelevant, as well as those with values almost unchanged and the ones with certain amount of NA values in their inputs (I don't see how imputing values here could be a wise decision; perhaps with less features and a human expert opinion about the field that could decide if some of them are determinant no matter what then we could do some work, but it is not the case).
 
 ```{r load_libraries, echo = FALSE, message = FALSE, warn.conflicts = FALSE}
 library(caret)
@@ -57,7 +58,7 @@ library(rattle)
 library(randomForest)
 ```
 
-```{r, cache = TRUE}
+```{r cleaning_training_data, cache = TRUE}
 # All this procedure is in a function because it will be handy to process the test set in the same way
 stripped_unique_cols <- c()
 stripped_na_cols <- c()
@@ -85,15 +86,18 @@ clean.data <- function(df, NAThreshold = 0.2) {
 training <- clean.data(input)
 ```
 
-Coincidentally, all covariates with at least 1 NA value in fact had percent highers that 95. This situation confirm the fact that imputing values are worthless and now the data set are completely valid.  
+Coincidentally, all covariates with at least 1 NA value in fact have percentage highers that 95. This situation confirm the fact that imputing values are worthless and now the data set are completely valid.  
 After all the cleaning process the remaining amount of covariates are `ncol(training)`.
-In this case I won't plot features because the amount of them apparently related with the problem are too many, and even a `featurePlot` will not be of much help, and analyzing them by smaller groups will make us to bias our result because we will be always missing the global perspective of the correlation between all features. There is no need to use anything about dummy variables because the only remaining categorical variable left is the outcome (**classe**).
+In this case I won't plot features because the amount of them apparently related with the problem are too many, and even a `featurePlot` will not be of much help, and analyzing them by smaller groups will make us to bias our decision because we will be always missing the global perspective of the correlation between all features. Until now, it does not seems to be needed to use anything about dummy variables because the only remaining categorical variable left is the outcome (**classe**).
 
 # Creation of training and test set.
 
 Following the indications received in class, I choose to set a proportion of 3/2 between training and test set.
 
-```{r training_testing_set}
+```{r creating_sets}
+init.seed <- function() {set.seed(12345)}
+
+init.seed()
 inTrain <- createDataPartition(y = training$classe, p = .6, list = FALSE)
 training_set <- training[ inTrain, ]
 testing_set <- training[ -inTrain, ]
@@ -101,60 +105,85 @@ testing_set <- training[ -inTrain, ]
 
 # Machine learning algorithm analysis.
 
-In order to do not get stuck in the set of algorithms reviewed in class and to gain a richer insight, I found [this site]<http://www.dataschool.io/comparing-supervised-learning-algorithms/> where it is made a throughout analysis of machine learning algorithms with a fancy table with lot of parameters evaluated. From there we can check that the best should be the last four taking into account that they handle features interactions automatically, they are *Decision Trees*, *Random Forest*, *AdaBoost* and *Neural Networks*. 
+After some aditional research in this topic, I found [this site](http://www.dataschool.io/comparing-supervised-learning-algorithms/) where it is made a throughout analysis of machine learning algorithms with a fancy table with lot of parameters evaluated. From there we can verify that the best algorithms should be the last four, taking into account that they handle features interactions automatically and other characteristics. They are *Decision Trees*, *Random Forest*, *AdaBoost* and *Neural Networks*. 
 Despite that "trees" do not handle very well irrelevant features (I already have stripped off 2/3 of all) I start with it because of the high training speed compared with the others.
 
-```{r decision_trees, cache = TRUE}
+## Decision trees.
+
+```{r decision_tree, cache = TRUE}
+init.seed()
 treeModel <- train(classe ~ ., data = training_set, method = "rpart")
 treeModel
 ```
 
-Even in the training set the accuracy is remarkable poor as you can see in the model information. The decision tree below shows how incomplete is this model, note that class C is not predicted in any way.
+Even in the training set the accuracy is remarkable poor as you can see in the model information.
 
 ```{r fancyplot}
 fancyRpartPlot(treeModel$finalModel, uniform = T, main = "Classification Tree")
 
-treePrediction <- predict(treeModel, newdata = testing_set)
-t <- confusionMatrix(testing_set$classe, treePrediction)
-t
+# handy function to enhance my productivity 
+checkAccuracy <- function(model, dataset, show = TRUE) {
+  pred <- predict(model, newdata = dataset)
+  res <- confusionMatrix(dataset$classe, pred)
+  if (show == TRUE) print(res)
+  invisible(res)
+}
+
+t <- checkAccuracy(treeModel, testing_set)
 ```
 
-A prediction with `r t$overall["Accuracy"]`% of accuracy is pretty bad, almost guessing. Also, we can see that the accuracy predicting class D is NA, confirming what we saw in the graphical decision tree.
+A prediction with `r t$overall["Accuracy"]`% of accuracy is pretty bad, almost guessing. Also, we can see that the accuracy predicting class C and D are the worst, not even by chance we could perform worst than that.
 
-Now, we will try to fix the non prediction of class D and how far this model could be enhanced in all classes making preprocessing and cross validation. 
+Now, we will check how far this model could be enhanced predicting all classes using preprocessing and cross validation. 
 
 ```{r decision_trees_pp_cv, cache = TRUE}
+init.seed()
 treeModelPPandCV <- train(classe ~ ., data = training_set, method = "rpart", 
                           preProcess=c("center", "scale"), 
-                          trControl = trainControl(method = "cv", number = 5))
+                          trControl = trainControl(method = "cv", number = 4))
 
-treePrediction <- predict(treeModelPPandCV, newdata = testing_set)
-t2 <- confusionMatrix(testing_set$classe, treePrediction)
-t2
+t2 <- checkAccuracy(treeModelPPandCV, testing_set)
 
 # comparing predictions
 sum(t$table == t2$table) == 25
 ```
 
-This model keep being as bad as the first one and the last check indicate that the model doesn't change a bit, what could make us think that for *"Decision Trees"* there are some features needed that perhaps where left out because one class remains to be unclassified.
+This model keep being as bad as the first one and the last check indicate that the model doesn't change a bit and predict exactly in the same way, what could make us think that for *"Decision Trees"* there are some features needed that perhaps where left out, mainly some of the first 7 that were wipe out from the data set. But, as in every summary and note read in class or in internet the other cited algorithms perform better than these, I will move to next. Only in case of weird behaviour will be revisited the cleaning data process.
+
+## Random Forest
 
 The next method is *"Random Forest"*. As no improvement was seen doing cross validation and preprocessing we will go without any improvement first.
 
 ```{r random_forest, cache = TRUE}
+init.seed()
 rfModel <- train(classe ~ ., data = training_set, method = "rf")
 
-rfPrediction <- predict(rfModel, newdata = testing_set)
-rfResult <- confusionMatrix(testing_set$classe, rfPrediction)
-rfResult
+rfResult <- checkAccuracy(rfModel, testing_set)
 ```
 
 That's a whole different result, a `r rfResult$overal["Accuracy"]*100`% of accuracy give a great chance to predict correctly the outcome needed for the submission part of the project with only an error of `r 1-rfResult$overal["Accuracy"]`%.  
-The time consumed by this algorithm was considerably high taking into account that my hardware is a Quad-Core at 2.7GHz with 8GB of memory, and it took more than an hour to train the model. In order to speed-up the generation of the report by someone that would like to reproduce this work, I will perform a test and error approach until I got all submissions well, for that, we have 3 tries in coursera site. Therefore, in case that exist any miss classified class we can improve the model with the previous parameters (preprocessing and cross validation) or keep looking into the set of cited algorithms before. 
+Now will be constructed another model using cross validation.
 
-```{r eval}
+```{r random_forest_CV, cache = TRUE}
+init.seed()
+rf2Model <- train(classe ~ ., data = training_set, method = "rf",
+                 trControl = trainControl(method = "cv", number = 4))
+
+rf2Result <- checkAccuracy(rf2Model, testing_set)
+```
+
+There is some interesting facts to summarize until here, the first *Random Forest* model run for a little more than an hour (the hardware used was a Quad-Core at 2.7GHz with 8GB of memory) but the model with cross validation took less than 8 minutes with an slighty minor out of sample error of "`r 1-rf2Result$overal["Accuracy"]`%".
+
+# Prediction
+
+Taking the best model available, this code predict the outcome of the intended test data for submission and generate the solutions into separate files ready to submit (the file generation code was taking from the assignment page). 
+
+```{r real_prediction, eval = FALSE}
+setup.filedata("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
 input2 <- read.csv("pml-testing.csv", na.strings = c("NA", "#DIV/0!"))
 testing <- clean.data(input2)
-result <- predict(rfModel, newdata = testing)
+
+result <- predict(rf2Model, newdata = testing)
 
 pml_write_files = function(x){
   n = length(x)
@@ -166,20 +195,19 @@ pml_write_files = function(x){
 
 pml_write_files(result)
 ```
+ 
+The result was 20 successes out of 20, something highly expected with the level of accuracy of the models analysed and only 20 observations to predict. Fair to say that with the difference between *Random Forest* models the result would be the same with either of them.
 
-This code predict the outcome with the intended test data for submission and generate the solutions into separate files ready to submit (the file generation code was taking from the assignment page).  
-The result was 20 successes out of 20, as expected with that level of accuracy and only 20 observations to predict.
+# In and out of sample error
 
-# In/out of sample error
+The out of sample error was already calculated, now let see the error predicting the training (in sample error).  
 
-The out of sample error was already calculated, now let see the error predicting the training.  
-
-```{r}
-rfPredictionInSample <- predict(rfModel, newdata = training_set)
-confusionMatrix(training_set$classe, rfPredictionInSample)
+```{r in_sample_error}
+checkAccuracy(rfModel, training_set)
+checkAccuracy(rf2Model, training_set)
 ```
 
-We can see that the *Random Forest* model is over fitted, luckily it perform pretty well when predict the testing subset but this is a sign that something could be improved in the feature selection. Thus, we could obtain a non so perfect fitted model respect the training subset and an even better accuracy in the testing subset.
+We can see, the *Random Forest* models are probably over fitted. They performed pretty well when predicted the testing subset but this is a sign that something could be improved in the feature selection (it was already noted with *Decision Trees*). Thus, we perhaps could obtain a non so perfect fitted model respect the training subset and an even better accuracy against the testing subset.
 
-The estimation of the error out of sample through cross validation with this algorithm is something that won't be performed because of a matter of time, even with `cache = TRUE` in R code chunks, it delays too much. You are free to evaluate the rubric that consider this as you like. But for those that prefer to consider that instead of following a test and error approach I correctly did what it was expected, keep reading this paragraph. The following steps would be re-train the *Random Forest* with the cross validation parameters set, then verify the accuracy. The expected value should be an improvement (at least tiny, remember that the computed model has already an excellent accuracy). Obviously, select the best model and classify the test data set for submissions. In fact, the *Adaboost* algorithm should follow the same process, another that could be tested is regression creating a dummy variable from the outcome. Making a final decision comparing all those candidates should be a better result and analysis.
-
+A real analysis should include others models like the ones mentioned at the beginning, even, it could be tested regression models creating a dummy variable from the outcome. Making a decision comparing more candidates should be a preferred choise in a real predicting tool, the names can be found this way `names(getModelInfo())`.  
+Remember that this analysis is "biased" by the purpose of accuratly predict the 20 values that must be submitted, not to create an industrial level prediction tool.
